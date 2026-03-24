@@ -15,7 +15,7 @@ def smart_parse(data):
     except: return {}
 
 @app.route('/webhook', methods=['POST', 'GET', 'HEAD'])
-def mahjoub_final_v41():
+def mahjoub_v42_final():
     if request.method in ['GET', 'HEAD']: return "OK", 200
     
     try:
@@ -23,18 +23,15 @@ def mahjoub_final_v41():
         order = smart_parse(payload.get('data', payload))
         customer = smart_parse(order.get('customer', order.get('salesLead', {})))
         
-        # استخراج المعرف الفريد (الموجود في الرابط الذي أرسلته)
-        order_internal_id = order.get('_id') 
-        # رقم الطلب الظاهري (1000000xxx)
+        # استخراج رقم الطلب (مثل 1000000928)
         order_handle = str(order.get('handle') or order.get('handel') or "0000")
         
         phone = customer.get('phone1') or customer.get('phone2') or order.get('phone')
         phone = str(phone).replace('+', '').replace(' ', '') if phone else ""
         if phone and not phone.startswith('967'): phone = '967' + phone
 
-        # --- الرابط الصحيح للعملاء ---
-        # نستخدم المعرف الداخلي لفتح الفاتورة مباشرة للعميل
-        pdf_link = f"https://mahjoub.online/orders/invoice/{order_internal_id}"
+        # --- الرابط المعتمد والمجرب في قمرة للعملاء ---
+        # هذا الرابط يفتح صفحة تتبع الطلب التي تحتوي على تفاصيل الفاتورة وزر التحميل
         tracking_link = f"https://mahjoub.online/customer/thank-you/{order_handle}"
         
         yemen_time = datetime.utcnow() + timedelta(hours=3)
@@ -66,9 +63,8 @@ def mahjoub_final_v41():
             f"{extra_note}\n"
             f"{divider}\n"
             f"🕒 *توقيت الطلب:* `{full_time}`\n"
-            f"🔗 *رابط التتبع:* {tracking_link}\n\n"
-            f"📦 *مرفق أدناه رابط فاتورة PDF إلكترونية لطلبكم:*\n"
-            f"{pdf_link}\n\n"
+            f"🔗 *رابط تتبع الطلب والفاتورة:* \n{tracking_link}\n\n"
+            f"📦 *يمكنكم تحميل فاتورة PDF الرسمية من داخل رابط التتبع أعلاه.*\n"
             f"{footer}"
         )
 
