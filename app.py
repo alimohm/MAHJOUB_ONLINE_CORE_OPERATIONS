@@ -8,9 +8,9 @@ import re
 
 app = Flask(__name__)
 
-# --- إعدادات محجوب أونلاين ---
-# رابط سيرفرك في Render (تأكد أنه يطابق اسم الخدمة لديك)
-BASE_URL = "https://mahjoub-bot.onrender.com" 
+# --- إعدادات واتساب محجوب أونلاين ---
+TEXTMEBOT_API_KEY = "CWEMDRmhtq4e"
+BASE_URL = "https://mahjoub-bot.onrender.com" # رابط سيرفرك في Render
 
 def smart_parse(data):
     if isinstance(data, dict): return data
@@ -20,17 +20,13 @@ def smart_parse(data):
 def get_real_text(val):
     txt = str(val).strip()
     if not txt or txt.lower() in ['none', 'null', '', 'false']: return None
+    if len(txt) >= 20 and re.match(r'^[a-f0-9]+$', txt): return None
     return txt
 
-# --- بوابة تحميل ملف test.pdf من GitHub (هذا ما يجعل الرابط يعمل) ---
+# --- بوابة تحميل ملف الفاتورة PDF (الميزة الجديدة) ---
 @app.route('/download/<path:filename>')
 def download_file(filename):
-    # يقوم السيرفر هنا بالبحث عن الملف في مجلد المشروع وإرساله
     return send_from_directory(os.getcwd(), filename)
-
-@app.route('/')
-def home():
-    return "سيرفر محجوب أونلاين يعمل بنجاح - بانتظار الطلبات", 200
 
 @app.route('/webhook', methods=['POST', 'GET', 'HEAD'])
 def mahjoub_auto_receipt_v38():
@@ -44,6 +40,7 @@ def mahjoub_auto_receipt_v38():
         event = payload.get('event', 'order.created')
         order_id = order.get('handel', '0000')
         phone = str(customer.get('phone1', '')).replace('+', '').replace(' ', '')
+        tracking_link = f"https://mahjoub.online/customer/thank-you/{order_id}"
         
         # --- التوقيت اليمني (GMT+3) ---
         yemen_time = datetime.utcnow() + timedelta(hours=3)
@@ -54,11 +51,29 @@ def mahjoub_auto_receipt_v38():
         is_paid = order.get('isPaid', False)
         pay_text = "✅ *مدفوع*" if is_paid else "❌ *غير مدفوع*"
         
+        extra_note = ""
+        st = status_title
+        
+        if not is_paid and not any(x in st for x in ["إلغاء", "ملغي", "مرتجع"]):
+            extra_note = "\n⚠️ *يرجى تزويدنا بصورة القسيمة المالية (إيصال السداد) هنا لمتابعة تنفيذ طلبكم.*"
+        elif any(x in st for x in ["إلغاء", "ملغي"]):
+            extra_note = "\n🚫 *إشعار:* نأسف لإبلاغكم بأنه تم إلغاء الطلب."
+        elif any(x in st for x in ["شحن", "تم الإرسال"]):
+            extra_note = "\n🚚 *إشعار:* تم تسليم طلبكم لشركة الشحن، وهو في الطريق إليكم."
+
         divider = "╼╼╼╼╼╼╼╼╼╼╼╼╼╼╼╼"
         footer = "⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n*نظام محجوب أونلاين | سوقك الذكي*"
 
         if event == "order.created":
-            # رابط الفاتورة الذي سيضغط عليه العميل
+            country = get_real_text(customer.get('countryName'))
+            city = get_real_text(customer.get('cityName'))
+            district = get_real_text(customer.get('district')) or get_real_text(customer.get('address1'))
+            street = get_real_text(customer.get('street')) or get_real_text(customer.get('address2'))
+            
+            addr_parts = [p for p in [country, city, district, street] if p]
+            full_address = " - ".join(addr_parts) if addr_parts else "اليمن"
+            
+            # تم إضافة رابط الفاتورة هنا في قسم إنشاء الطلب
             pdf_link = f"{BASE_URL}/download/test.pdf"
             
             msg = (
@@ -66,25 +81,42 @@ def mahjoub_auto_receipt_v38():
                 f"🧾 *فاتورة رقم:* `{order_id}`\n"
                 f"{divider}\n"
                 f"👤 *العميل:* {customer.get('firstName', '')} {customer.get('lastName', '')}\n"
-                f"💵 *الإجمالي:* `{order.get('priceWithShipping', 0)}` ريال\n"
+                f"📍 *موقع التوصيل:* {full_address}\n"
                 f"{divider}\n"
-                f"🚚 *الحالة:* 【 {status_title} 】\n"
-                f"📝 *الدفع:* {pay_text}\n"
-                f"🕒 *الوقت:* `{full_time}`\n"
+                f"💰 *الضريبة:* `{order.get('taxAmount', 0)}` ريال\n"
+                f"💵 *الإجمالي النهائي:* `{order.get('priceWithShipping', 0)}` ريال\n"
                 f"{divider}\n"
-                f"📄 *لتحميل فاتورتك بصيغة PDF اضغط هنا:*\n{pdf_link}\n\n"
+                f"🚚 *حالة المنتج:* 【 {status_title} 】\n"
+                f"📝 *حالة الدفع:* {pay_text}"
+                f"{extra_note}\n"
+                f"{divider}\n"
+                f"🕒 *توقيت الطلب:* `{full_time}`\n"
+                f"🔗 *رابط التتبع:* {tracking_link}\n"
+                f"📄 *تحميل الفاتورة PDF:* {pdf_link}\n\n"
                 f"{footer}"
             )
-            
-            # --- تنبيه هام ---
-            # هنا يجب أن تضع كود خدمة الإرسال البديلة التي اخترتها.
-            # إذا لم تضع خدمة بديلة، السيرفر سيستلم البيانات لكنه لن يرسل للواتساب.
-            print(f"تم تجهيز الرسالة لـ {phone}:\n{msg}")
+        else:
+            msg = (
+                "🔄 *إشعار نظام: تحديث الطلب*\n"
+                f"{divider}\n"
+                f"📦 *رقم المنتج:* `{order_id}`\n"
+                f"🚚 *حالة المنتج:* 【 {status_title} 】\n"
+                f"📝 *حالة الدفع:* {pay_text}"
+                f"{extra_note}\n"
+                f"{divider}\n"
+                f"🕒 *وقت التحديث:* `{full_time}`\n"
+                f"🔗 *تتبع:* {tracking_link}\n\n"
+                f"{footer}"
+            )
+
+        if phone and len(phone) > 5:
+            api_url = f"https://api.textmebot.com/send.php?recipient={phone}&apikey={TEXTMEBOT_API_KEY}&text={urllib.parse.quote(msg)}"
+            requests.get(api_url, timeout=10)
 
         return jsonify({"status": "success"}), 200
     except Exception as e:
-        print(f"خطأ: {e}")
         return jsonify({"status": "error"}), 200
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
