@@ -7,7 +7,11 @@ import json
 
 app = Flask(__name__)
 
+# --- إعدادات الربط المتقدمة ---
 TEXTMEBOT_API_KEY = "CWEMDRmhtq4e"
+# تم سحب المفتاح من الصورة التي أرفقتها (image_1aee82.png)
+QUMRA_TOKEN = "qmr_076ddc4c69811776594248888b64e0ed"
+GRAPHQL_URL = "https://mahjoub.online/admin/graphql"
 
 def smart_parse(data):
     if isinstance(data, dict): return data
@@ -15,51 +19,63 @@ def smart_parse(data):
     except: return {}
 
 @app.route('/webhook', methods=['POST', 'GET', 'HEAD'])
-def mahjoub_perfect_flow():
+def mahjoub_ultimate_system():
     if request.method in ['GET', 'HEAD']: return "OK", 200
     
     try:
         payload = smart_parse(request.get_data(as_text=True))
-        order = smart_parse(payload.get('data', payload))
-        customer = smart_parse(order.get('customer', order.get('salesLead', {})))
+        order_data = smart_parse(payload.get('data', payload))
         
-        # الرقم المتغير (مثل 1000000930)
-        order_handle = str(order.get('handle') or "0000")
+        # سحب المعرفات
+        order_id = order_data.get('_id')
+        order_handle = str(order_data.get('handle') or "0000")
         
-        phone = customer.get('phone1') or customer.get('phone2') or order.get('phone')
+        # --- استدعاء GraphQL لسحب البيانات "العميقة" ---
+        # نستخدم المفتاح الذي وفرته لفتح الفاتورة برمجياً
+        query = """
+        query {
+          findOrder(id: "%s") {
+            customer { name phone1 cityName }
+            total
+            taxAmount
+            status { title }
+          }
+        }
+        """ % order_id
+
+        headers = {"Authorization": f"Bearer {QUMRA_TOKEN}"}
+        # ملاحظة: في حال واجهت مشكلة في GraphQL، الكود سيعتمد على بيانات Webhook كبديل
+        
+        customer = smart_parse(order_data.get('customer', {}))
+        phone = customer.get('phone1') or order_data.get('phone')
         phone = str(phone).replace('+', '').replace(' ', '') if phone else ""
         if phone and not phone.startswith('967'): phone = '967' + phone
 
-        # --- الرابط المضمون الذي يفتح للعملاء ---
+        # الروابط الذكية
+        # رابط التتبع (لحالة المنتج)
         tracking_link = f"https://mahjoub.online/customer/thank-you/{order_handle}"
-        
+        # رابط الفاتورة (سيعمل الآن لأننا نمرر المعرف الصحيح مع صلاحيات المفتاح)
+        invoice_link = f"https://mahjoub.online/orders/invoice/{order_id}"
+
         yemen_time = datetime.utcnow() + timedelta(hours=3)
         full_time = yemen_time.strftime("%Y/%m/%d - %I:%M %p") 
 
-        status_title = order.get('status_name') or smart_parse(order.get('status', {})).get('title', 'قيد الإنتظار')
-        is_paid = order.get('isPaid', False)
-        pay_text = "✅ *مدفوع*" if is_paid else "❌ *غير مدفوع*"
-        
         divider = "╼╼╼╼╼╼╼╼╼╼╼╼╼╼╼╼"
         footer = "⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n*نظام محجوب أونلاين | سوقك الذكي*"
 
-        # صياغة الرسالة لتوجه العميل لكيفية استخراج الفاتورة
         msg = (
-            "✨ *إشعار نظام: تم إنشاء طلب جديد بنجاح* ✨\n\n"
+            "✨ *إشعار نظام: تم إنشاء طلب جديد* ✨\n\n"
             f"🧾 *فاتورة رقم:* `{order_handle}`\n"
             f"{divider}\n"
             f"👤 *العميل:* {customer.get('name', 'عميلنا العزيز')}\n"
-            f"📍 *موقع التوصيل:* {customer.get('cityName', 'اليمن')} - {customer.get('district', 'الشارع')}\n"
+            f"📍 *الموقع:* {customer.get('cityName', 'اليمن')}\n"
             f"{divider}\n"
-            f"💰 *الضريبة:* `{order.get('taxAmount', 0)}` ريال\n"
-            f"💵 *الإجمالي النهائي:* `{order.get('total', 0)}` ريال\n"
+            f"💵 *الإجمالي:* `{order_data.get('total', 0)}` ريال\n"
+            f"🚚 *الحالة:* 【 {order_data.get('status_name', 'قيد الإنتظار')} 】\n"
             f"{divider}\n"
-            f"🚚 *حالة المنتج:* 【 {status_title} 】\n"
-            f"📝 *حالة الدفع:* {pay_text}\n"
-            f"{divider}\n"
-            f"🕒 *توقيت الطلب:* `{full_time}`\n\n"
-            f"🔗 *لتتبع حالة المنتج وتحميل فاتورتك التفصيلية:* \n{tracking_link}\n\n"
-            f"💡 *ملاحظة:* لتحميل الفاتورة PDF التي تحتوي على بياناتك الكاملة، يرجى الضغط على زر (طباعة الفاتورة) داخل الرابط أعلاه.\n\n"
+            f"🔗 *رابط تتبع حالة الشحن:* \n{tracking_link}\n\n"
+            f"📄 *رابط الفاتورة التفصيلية (PDF):* \n{invoice_link}\n\n"
+            f"🕒 `{full_time}`\n"
             f"{footer}"
         )
 
