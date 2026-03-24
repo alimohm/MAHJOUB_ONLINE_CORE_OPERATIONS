@@ -5,12 +5,13 @@ import urllib.parse
 from datetime import datetime, timedelta
 import json
 import re
+from fpdf import FPDF # مكتبة رسم الفواتير
 
 app = Flask(__name__)
 
-# --- إعدادات واتساب محجوب أونلاين ---
+# --- إعدادات محجوب أونلاين ---
 TEXTMEBOT_API_KEY = "CWEMDRmhtq4e"
-BASE_URL = "https://mahjoub-bot.onrender.com" # رابط سيرفرك في Render
+BASE_URL = "https://mahjoub-bot.onrender.com"
 
 def smart_parse(data):
     if isinstance(data, dict): return data
@@ -23,10 +24,53 @@ def get_real_text(val):
     if len(txt) >= 20 and re.match(r'^[a-f0-9]+$', txt): return None
     return txt
 
-# --- بوابة تحميل ملف الفاتورة PDF (الميزة الجديدة) ---
-@app.route('/download/<path:filename>')
-def download_file(filename):
-    return send_from_directory(os.getcwd(), filename)
+# --- دالة صناعة قالب الفاتورة PDF برمجياً ---
+def create_invoice_pdf(order_id, customer_name, total, date_str):
+    pdf = FPDF()
+    pdf.add_page()
+    
+    # إعداد الخط والعنوان
+    pdf.set_font("Arial", 'B', 20)
+    pdf.cell(200, 15, txt="MAHJOUB ONLINE", ln=True, align='C')
+    
+    pdf.set_font("Arial", 'B', 14)
+    pdf.cell(200, 10, txt="OFFICIAL INVOICE", ln=True, align='C')
+    pdf.ln(10)
+    
+    # معلومات العميل والطلب
+    pdf.set_font("Arial", '', 12)
+    pdf.cell(100, 10, txt=f"Order ID: #{order_id}", ln=False)
+    pdf.cell(100, 10, txt=f"Date: {date_str}", ln=True, align='R')
+    pdf.cell(200, 10, txt=f"Customer Name: {customer_name}", ln=True)
+    pdf.ln(5)
+    
+    # جدول الفاتورة
+    pdf.set_fill_color(240, 240, 240)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(140, 10, txt="Description", border=1, fill=True)
+    pdf.cell(50, 10, txt="Total Amount", border=1, ln=True, fill=True, align='C')
+    
+    pdf.set_font("Arial", '', 12)
+    pdf.cell(140, 15, txt=f"Purchases from Mahjoub Online Store", border=1)
+    pdf.cell(50, 15, txt=f"{total} YER", border=1, ln=True, align='C')
+    
+    # التذييل
+    pdf.ln(20)
+    pdf.set_font("Arial", 'I', 10)
+    pdf.cell(200, 10, txt="Thank you for choosing our store! Your satisfaction is our priority.", ln=True, align='C')
+    pdf.cell(200, 10, txt="Mahjoub Online | Your Smart Market", ln=True, align='C')
+    
+    file_path = "invoice_order.pdf"
+    pdf.output(file_path)
+    return file_path
+
+# --- رابط تحميل الفاتورة (الذي يفتحه العميل) ---
+@app.route('/download/test.pdf')
+def download_test_pdf():
+    # سيقوم السيرفر بصناعة ملف PDF باسم "فاتورة افتراضية" عند الضغط على الرابط
+    # لاحقاً يمكننا جعل البيانات متغيرة حسب كل طلب
+    invoice_file = create_invoice_pdf("10000918", "Valued Customer", "352", datetime.now().strftime("%Y-%m-%d"))
+    return send_from_directory(os.getcwd(), invoice_file)
 
 @app.route('/webhook', methods=['POST', 'GET', 'HEAD'])
 def mahjoub_auto_receipt_v38():
@@ -42,7 +86,7 @@ def mahjoub_auto_receipt_v38():
         phone = str(customer.get('phone1', '')).replace('+', '').replace(' ', '')
         tracking_link = f"https://mahjoub.online/customer/thank-you/{order_id}"
         
-        # --- التوقيت اليمني (GMT+3) ---
+        # التوقيت اليمني
         yemen_time = datetime.utcnow() + timedelta(hours=3)
         full_time = yemen_time.strftime("%Y/%m/%d - %I:%M %p") 
         
@@ -51,29 +95,11 @@ def mahjoub_auto_receipt_v38():
         is_paid = order.get('isPaid', False)
         pay_text = "✅ *مدفوع*" if is_paid else "❌ *غير مدفوع*"
         
-        extra_note = ""
-        st = status_title
-        
-        if not is_paid and not any(x in st for x in ["إلغاء", "ملغي", "مرتجع"]):
-            extra_note = "\n⚠️ *يرجى تزويدنا بصورة القسيمة المالية (إيصال السداد) هنا لمتابعة تنفيذ طلبكم.*"
-        elif any(x in st for x in ["إلغاء", "ملغي"]):
-            extra_note = "\n🚫 *إشعار:* نأسف لإبلاغكم بأنه تم إلغاء الطلب."
-        elif any(x in st for x in ["شحن", "تم الإرسال"]):
-            extra_note = "\n🚚 *إشعار:* تم تسليم طلبكم لشركة الشحن، وهو في الطريق إليكم."
-
         divider = "╼╼╼╼╼╼╼╼╼╼╼╼╼╼╼╼"
         footer = "⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n*نظام محجوب أونلاين | سوقك الذكي*"
 
         if event == "order.created":
-            country = get_real_text(customer.get('countryName'))
-            city = get_real_text(customer.get('cityName'))
-            district = get_real_text(customer.get('district')) or get_real_text(customer.get('address1'))
-            street = get_real_text(customer.get('street')) or get_real_text(customer.get('address2'))
-            
-            addr_parts = [p for p in [country, city, district, street] if p]
-            full_address = " - ".join(addr_parts) if addr_parts else "اليمن"
-            
-            # تم إضافة رابط الفاتورة هنا في قسم إنشاء الطلب
+            city = get_real_text(customer.get('cityName')) or "اليمن"
             pdf_link = f"{BASE_URL}/download/test.pdf"
             
             msg = (
@@ -81,18 +107,15 @@ def mahjoub_auto_receipt_v38():
                 f"🧾 *فاتورة رقم:* `{order_id}`\n"
                 f"{divider}\n"
                 f"👤 *العميل:* {customer.get('firstName', '')} {customer.get('lastName', '')}\n"
-                f"📍 *موقع التوصيل:* {full_address}\n"
+                f"📍 *الموقع:* {city}\n"
                 f"{divider}\n"
-                f"💰 *الضريبة:* `{order.get('taxAmount', 0)}` ريال\n"
                 f"💵 *الإجمالي النهائي:* `{order.get('priceWithShipping', 0)}` ريال\n"
                 f"{divider}\n"
-                f"🚚 *حالة المنتج:* 【 {status_title} 】\n"
-                f"📝 *حالة الدفع:* {pay_text}"
-                f"{extra_note}\n"
+                f"🚚 *الحالة:* 【 {status_title} 】\n"
+                f"📝 *الدفع:* {pay_text}\n"
                 f"{divider}\n"
                 f"🕒 *توقيت الطلب:* `{full_time}`\n"
-                f"🔗 *رابط التتبع:* {tracking_link}\n"
-                f"📄 *تحميل الفاتورة PDF:* {pdf_link}\n\n"
+                f"📄 *تحميل فاتورة PDF:* {pdf_link}\n\n"
                 f"{footer}"
             )
         else:
@@ -100,11 +123,8 @@ def mahjoub_auto_receipt_v38():
                 "🔄 *إشعار نظام: تحديث الطلب*\n"
                 f"{divider}\n"
                 f"📦 *رقم المنتج:* `{order_id}`\n"
-                f"🚚 *حالة المنتج:* 【 {status_title} 】\n"
-                f"📝 *حالة الدفع:* {pay_text}"
-                f"{extra_note}\n"
+                f"🚚 *الحالة:* 【 {status_title} 】\n"
                 f"{divider}\n"
-                f"🕒 *وقت التحديث:* `{full_time}`\n"
                 f"🔗 *تتبع:* {tracking_link}\n\n"
                 f"{footer}"
             )
